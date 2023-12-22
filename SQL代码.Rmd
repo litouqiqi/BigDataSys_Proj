@@ -1,0 +1,128 @@
+#工商数据提取
+```{sql connection=}
+WITH a AS (  ## 执行信息-失信被执行人
+SELECT entid, month_id, COUNT(DISTINCT record_id) AS dishonesty
+FROM DWA_W_BUS_AL_ENT_DIS_SB_NEW
+GROUP BY entid, month_id),
+b AS (  ## 执行信息-被执行人（与上一个是否有包含关系？）
+SELECT entid, month_id, COUNT(DISTINCT record_id) AS executed
+FROM DWA_W_BUS_AL_ENT_ENEMENT_PER
+GROUP BY entid,month_id),
+c AS (  ## 个体经营异常名录信息
+SELECT entid, month_id, COUNT(DISTINCT record_id) AS abnormal
+FROM DWA_W_BUS_AL_ENT_GT_OPE_ABTY
+GROUP BY entid, month_id),
+d AS (  ## 严重违法信息
+SELECT entid, month_id, COUNT(DISTINCT record_id) AS illegal
+FROM DWA_W_BUS_AL_ENT_BREAK_LAW
+GROUP BY entid, month_id),
+e AS (  ## 行政处罚信息
+SELECT entid, month_id, COUNT(DISTINCT record_id) AS punish
+FROM DWA_W_BUS_AL_ENT_CASEBASINFO
+GROUP BY entid, month_id)
+f AS (  ## 清算
+SELECT entid, month_id, COUNT(DISTINCT record_id) AS punish
+FROM DWA_W_BUS_AL_ENT_QUICK_CACEL
+GROUP BY entid, month_id)
+SELECT * FROM a
+LEFT JOIN b ON a.entid=b.entid AND a.month_id=b.month_id
+LEFT JOIN c ON a.entid=c.entid AND a.month_id=c.month_id
+LEFT JOIN d ON a.entid=d.entid AND a.month_id=d.month_id
+LEFT JOIN e ON a.entid=e.entid AND a.month_id=e.month_id
+LEFT JOIN f ON a.entid=f.entid AND a.month_id=f.month_id;
+
+```
+
+
+
+#工商数据表名称处理
+```{r}
+library(readxl)
+
+# 读取Excel文件
+data <- read_excel("DWA_W_BUS_AL_ENT_BASIC_L10K.xlsx")
+gongshang<-read.csv("Gongshang_6.csv")
+S2_IDs<-read.csv("S2_IDs.csv")
+
+
+d1<-left_join(data,S2_IDs,"entid")
+d2<-left_join(d1,gongshang,by=c("entid","natural_cust_id"))
+
+write.csv(d2,"wide_gongshang.csv")
+colnames(d2)<-names<-c("entid","注册资本(无单位)/资金数额","注册资本币种","注册资本币种代码","经营状态编码","成立日期","经营期限自","经营期限至","企业(机构)类型编码","注册地址行政编号",
+         "年报年份","国民经济行业名称","natural_cust_id",        "工商_执行信息-失信被执行人","工商_执行信息-被执行人","工商_个体经营异常名录信息","工商_违法信息","工商_行政处罚信息","工商_简易注销-基本信息")
+write.csv(d2,"wide_gongshang_cn.csv")
+```
+
+#工商数据进行主成分分析
+```{r}
+# scale. = TRUE表示分析前对数据进行归一化；
+d3<-d2[,c("dis_sb" ,  "enement_per" , "break_law", "casebasinfo" )]
+d3[is.na(d3)]<-0
+com1 <- prcomp(d3, center = TRUE,scale. = TRUE)
+summary(com1)
+
+#提取PC score；
+df1<-com1$x
+head(df1)
+#将iris数据集的第5列数据合并进来；
+df1<-data.frame(df1,d3)
+head(df1)
+
+#提取主成分的方差贡献率，生成坐标轴标题；
+summ<-summary(com1)
+xlab<-paste0("PC1(",round(summ$importance[2,1]*100,2),"%)")
+ylab<-paste0("PC2(",round(summ$importance[2,2]*100,2),"%)")
+p2<-ggplot(data = df1,aes(x=PC1,y=PC2))+
+stat_ellipse(aes(),
+type = "norm", geom ="polygon",alpha=0.2,color=NA)+
+geom_point()+labs(x=xlab,y=ylab,color="")+
+guides(fill=F)
+p2+scale_fill_manual(values = c("purple","orange","blue"))+
+scale_colour_manual(values = c("purple","orange","blue"))
+```
+
+
+```{sql connection=}
+
+```
+
+
+
+#欠费数据进行工商表连接
+
+```{r}
+d1<-read.csv("data1.csv")
+d2<-read.csv("wide_gongshang.csv")
+
+colnames(d1)
+colnames(d2)[14]<-"NATURAL_CUST_ID"
+
+d3<-select(d2,-"X")
+library(tidyr)
+library(dplyr)
+
+
+#install.packages("data.table")
+
+library("data.table")
+
+d4<-d3%>%group_by(NATURAL_CUST_ID)%>%mutate(rank(ancheyear),max(rank(ancheyear)))
+
+#取最近年报
+d5<-d4[d4$`rank(ancheyear)`==d4$`max(rank(ancheyear))`,]
+
+#包含各种信息，有重复id
+out1<-left_join(d1,d5,by="NATURAL_CUST_ID")
+#每个cust id随机取一条
+d6<-d5%>%group_by(NATURAL_CUST_ID)%>%mutate(row_number())
+d7<-d6[d6$`row_number()`==1,]
+out2<-left_join(d1,d7,by="NATURAL_CUST_ID")
+
+
+
+write_excel_csv(out1, 'out1-n.csv')
+write_excel_csv(out2, 'out2-n.csv')
+write.csv(out2,"out2-t.csv",fileEncoding = "UTF-8")
+```
+
